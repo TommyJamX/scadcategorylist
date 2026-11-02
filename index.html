@@ -16,8 +16,32 @@
        font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
   .wrap{max-width:940px;margin:0 auto;padding:28px 20px 64px}
 
-  h1{margin:0 0 18px;padding-bottom:14px;border-bottom:2px solid var(--ink);
-     font-size:19px;font-weight:750;letter-spacing:.14em;text-transform:uppercase}
+  .top{display:flex;align-items:center;gap:14px;margin:0 0 14px;padding-bottom:14px;
+       border-bottom:2px solid var(--ink)}
+  h1{margin:0;flex:1 1 auto;font-size:19px;font-weight:750;letter-spacing:.14em;text-transform:uppercase}
+  .brand{flex:none;display:block;height:20px;width:auto}
+
+  .bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 14px}
+  .tool{font:inherit;font-size:13px;font-weight:600;border:0;border-radius:6px;
+                    padding:6px 12px;cursor:pointer;background:none;color:var(--muted)}
+  .tools{margin-left:auto;display:flex;gap:6px}
+  .tool{background:var(--surface);border:1px solid var(--rule);color:var(--ink)}
+  .tool:hover{border-color:var(--ink)}
+  .count{flex:none;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+  .search{flex:1 1 260px;max-width:360px;display:flex;align-items:center;gap:8px;background:var(--surface);
+          border:1.5px solid var(--rule);border-radius:8px;padding:0 6px 0 11px}
+  .search:focus-within{border-color:var(--ink)}
+  .search svg{flex:none;width:16px;height:16px;stroke:var(--muted);fill:none;stroke-width:2}
+  .search input{flex:1 1 auto;min-width:0;border:0;outline:0;background:none;font:inherit;padding:8px 0;color:var(--ink)}
+  .search button{flex:none;border:0;background:none;cursor:pointer;font-size:18px;line-height:1;
+                 color:var(--muted);padding:4px 6px;visibility:hidden}
+  .search.has button{visibility:visible}
+  .branch.hide,.kid.hide{display:none}
+  mark{background:#D8ED5C;color:inherit;border-radius:2px;padding:0 1px}
+  .empty{display:none;padding:22px;text-align:center;color:var(--muted)}
+  .empty.on{display:block}
+  .kid .nm{cursor:copy}
+  .kid .nm:hover{text-decoration:underline}
 
   .list{background:var(--surface);border:1px solid var(--rule);border-radius:10px;overflow:hidden}
   .branch{border-bottom:1px solid var(--rule)}
@@ -51,13 +75,28 @@
          font-size:12px;padding:9px 14px;border-radius:7px;transition:.18s ease;z-index:9}
   #toast.on{opacity:1;transform:translate(-50%,0)}
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
-  @media (max-width:560px){.kids{padding-left:18px}}
+  @media (max-width:560px){.kids{padding-left:18px}.tools{margin-left:0}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Ad Category List</h1>
+  <div class="top">
+    <h1>Ad Category List</h1>
+    <img class="brand" src="jamx-logo.png" alt="JamX">
+  </div>
+  <div class="bar">
+    <label class="search" id="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+      <input id="q" type="search" placeholder="Search categories" autocomplete="off" aria-label="Search categories">
+      <button type="button" id="qclear" aria-label="Clear search">&times;</button>
+    </label>
+    <div class="tools">
+      <button class="tool" id="expand">Expand all</button>
+      <button class="tool" id="collapse">Collapse all</button>
+    </div>
+  </div>
   <div class="list" id="list"></div>
+  <div class="empty" id="empty">No categories match that search.</div>
 </div>
 <div id="toast"></div>
 
@@ -82,26 +121,83 @@ function fallback(text, done){
   ta.value = text; ta.style.cssText = 'position:fixed;opacity:0';
   document.body.appendChild(ta); ta.select();
   try { document.execCommand('copy'); done(); }
-  catch(e){ toast('Copy blocked — select the text manually'); }
+  catch(e){ toast('Copy blocked. Select the text manually'); }
   ta.remove();
 }
 
-list.innerHTML = DATA.map(b => `
+// Rows with an IAB id get a chip that copies it; rows without one copy the name on click.
+function render(){
+  list.innerHTML = DATA.map(b => `
   <div class="branch">
     <button class="head" aria-expanded="false">
       <i class="caret"></i>
-      <span class="chip" data-copy="${b.id}" title="Copy ${b.id}">${b.id}</span>
-      <span class="title">${esc(b.name)}</span>
+      ${b.id ? `<span class="chip" data-copy="${b.id}" title="Copy ${b.id}">${b.id}</span>` : ''}
+      <span class="title" data-name="${esc(b.name)}">${esc(b.name)}</span>
+      ${b.id ? '' : `<span class="count">${b.kids.length}</span>`}
     </button>
     ${b.kids.length ? `<div class="kids"><div class="grid">${b.kids.map(k => `
       <div class="kid">
-        <span class="chip" data-copy="${k.id}" title="Copy ${k.id}">${k.id}</span>
-        <span>${esc(k.name)}</span>
+        ${k.id ? `<span class="chip" data-copy="${k.id}" title="Copy ${k.id}">${k.id}</span>
+        <span data-name="${esc(k.name)}">${esc(k.name)}</span>` : `<span class="nm" data-copy="${esc(k.name)}" data-name="${esc(k.name)}" title="Copy name">${esc(k.name)}</span>`}
       </div>`).join('')}</div></div>` : ''}
   </div>`).join('');
+  filter();
+}
+// Keyword search: a matching group shows all its subcategories; otherwise only the matching ones show.
+const q = document.getElementById('q');
+function mark(el, term){
+  const name = el.dataset.name;
+  if (!term){ el.textContent = name; return; }
+  const i = name.toLowerCase().indexOf(term);
+  el.innerHTML = i < 0 ? esc(name)
+    : esc(name.slice(0, i)) + '<mark>' + esc(name.slice(i, i + term.length)) + '</mark>' + esc(name.slice(i + term.length));
+}
+function filter(){
+  const term = q.value.trim().toLowerCase();
+  document.getElementById('search').classList.toggle('has', !!q.value);
+  let shown = 0;
+  list.querySelectorAll('.branch').forEach(br => {
+    const title = br.querySelector('.title');
+    const id = (br.querySelector('.head .chip') || {}).dataset?.copy || '';
+    mark(title, term);
+    const groupHit = !term || title.dataset.name.toLowerCase().includes(term) || id.toLowerCase() === term;
+    let kidHits = 0;
+    br.querySelectorAll('.kid').forEach(k => {
+      const nm = k.querySelector('[data-name]');
+      const kid = (k.querySelector('.chip') || {}).dataset?.copy || '';
+      mark(nm, term);
+      const hit = !term || groupHit || nm.dataset.name.toLowerCase().includes(term) || kid.toLowerCase() === term;
+      k.classList.toggle('hide', !hit);
+      if (term && hit) kidHits++;
+    });
+    const show = groupHit || kidHits > 0;
+    br.classList.toggle('hide', !show);
+    if (show) shown++;
+    if (term && br.querySelector('.kids')){
+      br.classList.toggle('open', show);
+      br.querySelector('.head').setAttribute('aria-expanded', show);
+    }
+  });
+  document.getElementById('empty').classList.toggle('on', shown === 0);
+}
+q.addEventListener('input', () => {
+  if (!q.value.trim()) setAll(false);
+  filter();
+});
+document.getElementById('qclear').onclick = () => { q.value = ''; setAll(false); filter(); q.focus(); };
+function setAll(on){
+  list.querySelectorAll('.branch').forEach(br => {
+    if (!br.querySelector('.kids') || br.classList.contains('hide')) return;
+    br.classList.toggle('open', on);
+    br.querySelector('.head').setAttribute('aria-expanded', on);
+  });
+}
+document.getElementById('expand').onclick = () => setAll(true);
+document.getElementById('collapse').onclick = () => setAll(false);
+render();
 
 list.addEventListener('click', e => {
-  const chip = e.target.closest('.chip');
+  const chip = e.target.closest('[data-copy]');
   if (chip){ e.stopPropagation(); copy(chip.dataset.copy); return; }
   const head = e.target.closest('.head');
   if (!head) return;
